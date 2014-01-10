@@ -1,4 +1,5 @@
-Python Module: Sigfig v1.0
+1
+n Module: Sigfig v1.0
 Developed by: Michael Busuttil, Travis Valdez
 Last Updated: Friday, October 11, 2013
 
@@ -109,3 +110,4 @@ Usage:
 
 		>>> roundit(1.234567,0.0001234,crop=30,form="tuple")
 		['1.234 57', '0.00012']
+
