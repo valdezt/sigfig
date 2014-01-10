@@ -8,6 +8,6 @@ setup(
     author_email = 'drake@pcxftw.com',
     url = 'https://github.com/drakegroup/sigfig',
     download_url = 'https://drakegroup/sigfig/tarball/0.1',
-    keywords = ['numbers','numerical','data','output','format']
+    keywords = ['numbers','numerical','data','output','format'],
     classifiers = [],
 )
