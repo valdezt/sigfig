@@ -1,7 +1,6 @@
-1
-n Module: Sigfig v1.0
+Module: Sigfig v0.1
 Developed by: Michael Busuttil, Travis Valdez
-Last Updated: Friday, October 11, 2013
+Last Updated: Friday, January 10, 2014
 
 Usage:
 
