@@ -348,8 +348,9 @@ def roundit(number, unc, **kwds):
     # If the user enters an integer as an uncertainty, round it to that amount
     # of significant figures and return with warning
     if isinstance(unc,int) == True:
-        return "** WARNING:: INTEGER UNCERTAINTY TAKEN AS NUMBER OF"+\
-        "SIGNIFICANT FIGURES ("+str(unc)+")"
+        print "** WARNING:: INTEGER UNCERTAINTY TAKEN AS NUMBER OF "+\
+        "SIGNIFICANT FIGURES ("+str(unc)+") **"
+        return round_sf(number,unc)
 
     # Search for scientific notation markers and replace with 'e'. Must do this
     # with unc after it has been tested to see if it is an integer
