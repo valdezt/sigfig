@@ -109,4 +109,6 @@ Usage:
 
 		>>> roundit(1.234567,0.0001234,crop=30,form="tuple")
 		['1.234 57', '0.00012']
+		
+PLEASE DIRECT ALL COMMENTS, SUGGESTIONS AND BUGS TO: valdezt93@gmail.com AND THANKS FOR DOWNLOADING!
 
