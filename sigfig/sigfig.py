@@ -1,434 +1,663 @@
-import decimal
-import math
+﻿#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
 from decimal import Decimal
+from sortedcontainers import SortedDict
+from warnings import warn
 
-def float_to_decimal(f):
-    
-    # http://docs.python.org/library/decimal.html#decimal-faq
-    "Convert a floating point number to a Decimal with no loss of information."
+_manual_settings = {}
+_default_settings = {
+    'spacing': 0.1,
+    'spacer': '',
+    'decimal': '.',
+    'separator': ' ± ',
+    'cutoff': 9,
+    'prefix': False,
+    'exponent': 'E',
+    'round_by_sigfigs': False,
+    'round_by_decimals': True,
+    'given_sigfigs': 0}
+_major_prefixes = {
+    24: ['Y', 'septillion'],
+    21: ['Z', 'sextillion'],
+    18: ['E', 'quintillion'],
+    15: ['P', 'quadrillion'],
+    12: ['T', 'trillion'],
+    9: ['G', 'billion'],
+    6: ['M', 'million'],
+    3: ['k', 'thousand'],
+    0: ['',''],
+    -3: ['m', 'thousandth'],
+    -6: ['μ', 'millionth'],
+    -9: ['n', 'billionth'],
+    -12: ['p', 'trillionth'],
+    -15: ['f', 'quadrillionth'],
+    -18: ['a', 'quintillionth'],
+    -21: ['z', 'sextillionth'],
+    -24: ['y', 'septillionth']}
+_minor_prefixes = {
+    2: ['h', 'hundred'],
+    1: ['da', 'ten'],
+    -1: ['d', 'tenth'],
+    -2: ['c', 'hundredth']}
 
-    n, d = f.as_integer_ratio()
-    numerator, denominator = Decimal(n), Decimal(d)
-    ctx = decimal.Context(prec=60)
-    result = ctx.divide(numerator, denominator)
+class _Number:
+    '''
+    Private data structure for storing & manipulating numbers
 
-    while ctx.flags[decimal.Inexact]:
-        ctx.flags[decimal.Inexact] = False
-        ctx.prec *= 2
-        result = ctx.divide(numerator, denominator)
-
-    return result
-
-def round_sf(number, sigfig):
-
-    # http://stackoverflow.com/questions/2663612/
-    # nicely-representing-a-floating-point-number-in-python/2663623#2663623
-    "Round a number to a certain amount of significant digits."
-
-    # First, it must be made certain that the number of significant digits to
-    # be rounded to is greater than zero
-    assert(sigfig > 0)
-
-    # The number is then converted to a decimal number
-    try:
-        d=decimal.Decimal(number)
-    except TypeError:
-        d=float_to_decimal(float(number))
-        
-    # Separate the number given into three strings: a sign (0 for +/1 for -),
-    # the digits as an array, and the exponent.
-    sign,digits,exponent = d.as_tuple()
-    
-    # Case 1: if the amount of digits is less than the amount of significant
-    # digits desired, we must extend it by adding zeros at the end of the
-    # number until we have the amount of digits desired.
-    if len(digits) < sigfig:
-        digits = list(digits)
-        digits.extend([0] * (sigfig - len(digits)))
-    
-    # Create a variable "shift" and set it equal to the new exponent of the
-    # number after adding zeros.
-    shift = d.adjusted()
-    
-    # Set a new variable, result, equal to an integer of all numbers up to
-    # the desired number of digits.
-    result=int(''.join(map(str, digits[:sigfig])))
-    
-    # Round the result if the number of digits is greater than that desired.
-    # Look at the number to the right of the last desired digit and decide
-    # if rounding up is necessary. Since "result" does not contain a decimal,
-    # we can simply add 1 to the current value of result.
-    if len(digits) > sigfig and digits[sigfig] >= 5: result += 1
-    
-    # Set result to a list of strings of its digits (an array)
-    result = list(str(result))
-    
-    # Rounding can change the length of result.
-    # If so, adjust shift by the difference between the length of the new
-    # result and the amount of sigfigs desired.
-    shift += len(result) - sigfig
-    
-    # Reset length of result to sigfig; chip off the extra digit if we may
-    # have just added one on. Otherwise, result remains unchanged..
-    result = result[:sigfig]
-    
-    if shift >= sigfig - 1:
-        # Tack more zeros on the end if we shortened the number by rounding it
-        # This occurs if the number. 
-        result += ['0'] * (shift-sigfig+1)
-    elif 0 <= shift:
-        # Place the decimal point in between digits if our number contained
-        # digits after the decimal
-        result.insert(shift+1, '.')
-    else:
-        # Tack zeros on the front if our number was less than zero originally
-        assert(shift < 0)
-        result = ['0.'] + ['0']*(-(shift+1)) + result
-
-    if sign:
-        result.insert(0, '-')
-
-    return ''.join(result)
-
-def round_unc(number, unc, **kwds):
-    
-    """Round an uncertainty value to 1 or 2 sigfigs and output the number
-    rounded to its uncertainty"""
-
-    if 'form' in kwds.keys():
-        outputform = kwds['form']
-    else:
-        outputform = 'SI'
-
-    if 'crop' in kwds.keys():
-        sigfig_crop = kwds['crop']
-    else:
-        sigfig_crop = 0
-
-    number = str(number)
-
-    if Decimal(number) < 0:
-        nsign = 1
-    else:
-        nsign = 0
-
-    if Decimal(unc) < 0:
-        return 'WARNING:: UNCERTAINTY LESS THAN ZERO. TRY AGAIN'
-
-    # Search for scientific notation markers (FORTRAN and Maple compatible),
-    # and replace them with 'e'
-    number = str(number).replace('E', 'e').replace('D', 'e').replace('Q', 'e')\
-                        .replace('-','')
-    unc = str(unc).replace('E', 'e').replace('D', 'e').replace('Q', 'e')
-
-    # Create a new number that is the uncertainty to two significant digits,
-    # replacing zeros, decimals, and negative signs with blank spaces
-    unc_tosigfigz = round_sf(unc, 2).replace('0', '').replace('.', '')\
-                                    .replace('-', '')
-
-    if len(unc_tosigfigz) == 1:
-        unc_tosigfigz += "0" # We want two digits in our uncertainty
-
-    # If the uncertainty is now greater than 30, read only one significant
-    # figure.
-    # Now change the uncertainty to include only the correct amount of
-    # significant digits.
-    if Decimal(unc_tosigfigz) >= Decimal(sigfig_crop): 
-        unc_sigfigz=1
-        unc_tosigfigz=round_sf(unc_tosigfigz,unc_sigfigz).replace('0','')
-    else: # Otherwise, read two
-        unc_sigfigz=2
-        unc_tosigfigz=round_sf(unc_tosigfigz,unc_sigfigz)
-
-    unc = round_sf(unc, unc_sigfigz)
-
-    # Find the decimal place in both the uncertainty and the number.
-    # When all is said and done, we want both numbers to have the same
-    # amount of digits in relation to the decimal place ?? **REVISE**
-    uncdecplace = unc.find('.')
-    numdecplace = number.find('.')
-
-    # First case; if the uncertainty is a float value
-    if uncdecplace != -1:
-        uncafterdec = len(list(unc)[uncdecplace+1:])
-
-        # Case 1a; the uncertainty is a float, but the number is an
-        # integer. Need to add a decimal and zeros for rounding and
-        # reset the numdecplace variable.
-        if numdecplace==-1:
-            number=''.join(list(number)+['.']+['0']*(uncafterdec+1))
-            numdecplace = number.find('.')
-
-        # Case 1b; the uncertainty and number are both floats. Need
-        # to add only zeros to the number for rounding.
+    Attributes:
+        .map: - dict for number storage
+              - maps 10's power (key) to numeric value (value)
+              - i.e. 3.14 => .map = {0:3, -1: 1, -2: 4}
+    Attributes/Mehtods for inspection (getting values):
+        .sign:     string of either '+' or '-', denoting sign of stored number
+        .positive: bool True/False depending on number's sign
+        .negative: bool True/False depending on number's sign
+        .has_uncertainty: bool True/False depending on whether there is an associated uncertainty with this number
+        .max_power(): returns integer corresponding to number's highest populated 10's power
+        .min_power(): returns integer corresponding to number's lowest populated 10's power
+        .decimate(dict, _Number, bool, bool): returns string of all digits in given format
+            specifying spacing and non-standard decimal point, optional sign
+            optionally embedded uncertainty, and optional leading/trailing zeros
+        .output(type): returns number in given type
+    Methods for manipulation (changing the value):
+        .set_sign(str): function used to change/set the number's sign by passing '-' or '+'
+                        so that .positive, .negative, .sign don't need manual updating
+        .increment_power_by(int): (de)increments all keys in .map by given value
+        .round_by_decimals(int):  performs rounding operation to the given 10's power
+        .prefixify(str):          converts to Scientific or Engineering notation with optional SI prefix
+    '''
+    def __init__(self):
+        self.set_sign('+')
+        self.prefix = ''
+        self.has_uncertainty = False
+        self.map = SortedDict()
+        self.zero = False
+    def set_sign(self, sign='+'):
+        '''sets the number's sign'''
+        if sign == '+':
+            self.negative = False
+            self.positive = True
+            self.sign = '+'
+        elif sign == '-':
+            self.negative = True
+            self.positive = False
+            self.sign = '-'
         else:
-            number=''.join(list(number)+['0']*uncafterdec)
-            numdecplace = number.find('.')
-
-        # Since the uncertainty is a float, it will have digits
-        # after the decimal place.
-        result = ''.join(number[:numdecplace + uncafterdec + 1])\
-                   .replace('.', '')
-        result = list(result)
-
-        i = 0
-        zeros = 0
-        if result[0] == '0':
-            for i in range(len(result)-1):
-                if result[i] == '0':
-                    zeros = zeros + 1
-                    i = i + 1
-                else:
-                    break
-
-        result = ''.join(result)
-        # Doing some rounding in the number
-        if int(list(number)[numdecplace + uncafterdec + 1]) >= 5:
-            result = '0'*zeros + str(int(result) + 1)
-
-        result = list(result)
-
-        numafterdec = len(list(result)[numdecplace + 1:])
-
-        # If we've shortened the number by rounding it, add on a zero
-        # to match the amount of digits after the decimal in the
-        # uncertainty.
-        if int(numafterdec) < int(uncafterdec):
-            result += ['0']*(int(uncafterdec) - int(numafterdec) - 1)
-
-        # Replacing negative sign if needed
-        result.insert(numdecplace, '.')
-        if nsign:
-            result.insert(0,'-')
-
-        result = ''.join(result)
-        
-        return result
-
-    # If the uncertainty has no decimal place
-    elif uncdecplace == -1:
-
-        # Adding a decimal to the uncertainty
-        unc = ''.join(list(unc) + ['.'])
-
-        # Locate decimal place in the number and uncertainty
-        if numdecplace == -1:
-            number = ''.join(list(number) + ['.'])
-            numdecplace = number.find('.')
-
-        uncdecplace = unc.find('.')
-
-        if unc_sigfigz == 2:
-            # Count trailing zeros
-            zeros = len(list(unc)[2:uncdecplace])
-
-            # Trimming result to correct place
-            result = ''.join(list(number)[:numdecplace - zeros])
-            number = ''.join(list(number)[:numdecplace - zeros + 2])\
-                       .replace('.','') + '0'*5
-
-            # Round the number if necessary
-            if int(number[numdecplace - zeros]) >= 5:
-                result = str(int(result) + 1)
+            warn('sign must be "+" or "-", assuming positive')
+            self.negative = False
+            self.positive = True
+            self.set_sign('+')
+    def max_power(self):
+        '''returns integer corresponding to number's highest populated 10's power'''
+        return max(self.map)
+    def min_power(self):
+        '''returns integer corresponding to number's lowest populated 10's power'''
+        return min(self.map)
+    def increment_power_by(self, n):
+        '''(de)increments all keys in .map'''
+        tmp = SortedDict()
+        for key in self.map:
+            tmp[key + n] = self.map[key]
+        self.map = tmp
+    def round_by_decimals(self, decimals):
+        '''performs rounding operation to the given 10's power'''
+        last_power = -decimals
+        tmp_map = SortedDict({self.max_power(): 0})
+        tmp_map = SortedDict({last_power: 0})
+        last_tmp_power = self.max_power()
+        for key in range(self.max_power(), min(-decimals - 1, -1), -1):
+            if key < last_power and key >= 0 or key not in self.map:
+                float(0)
+            #if key < last_power and key < 0:
+            #    Decimal(3)
+            #    continue
             else:
-                result = str(result)
-
-            # Insert trailing zeros again
-            result = list(result[:numdecplace - zeros])
-            result += ['0']*int(zeros)
-            if nsign:
-                result.insert(0,'-')
-            result = ''.join(result)
-
-            return result
-
-        elif unc_sigfigz == 1:
-            zeros = len(list(unc)[1:uncdecplace])
-
-            result = ''.join(list(number)[:numdecplace - zeros])\
-                       .replace('.', '')
-
-            numnodec = ''.join(list(number)).replace('.', '')
-            numnodec += '000'
-
-            if int(list(numnodec)[numdecplace - zeros]) >= 5:
-                result = str(int(result) + 1)
-
-            result = list(result)
-            result += ['0']*int(zeros)
-            if nsign:
-                result.insert(0,'-')
-            result = ''.join(result)
-
-            return result
-
-def sp_loc(result,numdecplace):
-            # Finding where spaces are needed in the answer, once every 3 digits
-        space_locations1 = [0]
-        space_locations = []
-
-        # ans_dec-2 is used because we need the numbers BEFORE the decimal
-        for i in range(int(numdecplace)/3):
-            space_locations1.append(1 + (numdecplace+2)%3 + 3*i)
-
-        # isolating the numbers AFTER the decimal
-        for i in range((len(str(result)) - numdecplace)/3):
-            space_locations.append(numdecplace + 3*(i+1))
-        
-        if space_locations1[len(space_locations1)-1] != int(numdecplace):
-            space_locations1.append(numdecplace)
-
-        # Adding spaces into the answer
-        new_ans=""
-        for i in range(len(space_locations1) - 1):
-            if i==(len(space_locations1) - 2):
-                a = int(space_locations1[i])
-                b = int(space_locations1[i + 1])
-                new_ans = new_ans+str(result)[a:b]
+                last_tmp_power = key
+                tmp_map[key] = self.map[key]
+        if last_power == self.max_power() + 1:
+            if self.map[self.max_power()] >= 5:
+                tmp_map[last_power] = 1
             else:
-                a = int(space_locations1[i])
-                b = int(space_locations1[i + 1])
-                new_ans = new_ans+str(result)[a:b] + ' '
-
-        try:
-            space_locations[len(space_locations)-1]
-        except IndexError:
-            space_locations.append(len(result))
-        else:
-            if len(result)-1 != space_locations[len(space_locations)-1] and\
-            len(result) != space_locations[len(space_locations)-1]:
-                space_locations.append(len(result))
-
-        if len(space_locations) == 1:
-            a = int(space_locations1[len(space_locations1) - 1])
-            b = int(space_locations[len(space_locations) - 1])
-            new_ans=new_ans+str(result)[a:b+1]+' '
-        elif len(space_locations)==2:
-            a=int(space_locations1[len(space_locations1)-1])
-            b=int(space_locations[0])
-            new_ans=new_ans+str(result)[a:b+1]+' '
-            a=int(space_locations[len(space_locations)-1])
-            new_ans=new_ans+str(result)[b+1:a+1]+' '
-        else:
-            for i in range(len(space_locations)-1):
-                a=int(space_locations[i])
-                if i==0:
-                    b=int(space_locations1[len(space_locations1)-1])
-                    new_ans=new_ans+str(result)[b:a+1]+' '
-                    b=int(space_locations[i+1])
-                    new_ans=new_ans+str(result)[a+1:b+1]+' '
-                elif i==len(space_locations)-1:
-                    b=int(space_locations[i+1])
-                    new_ans=new_ans+str(result)[a+1:b+1]
+                self.zero = True
+                tmp_map = SortedDict({last_power:0})
+                self.set_sign('+')
+        elif last_power > self.max_power():
+            self.zero = True
+            tmp_map = SortedDict({last_power:0})
+            self.set_sign('+')
+        elif last_tmp_power - 1 in self.map and self.map[last_tmp_power - 1] >= 5:
+            tmp_map[last_tmp_power] += 1
+            tmp_power = last_tmp_power
+            while tmp_map[tmp_power] == 10:
+                tmp_map[tmp_power] = 0
+                tmp_power += 1
+                if tmp_power not in tmp_map:
+                    tmp_map[tmp_power] = 1
                 else:
-                    b=int(space_locations[i+1])
-                    new_ans=new_ans+str(result)[a+1:b+1]+' '
-        new_ans=new_ans[:-1]
-        
-        return new_ans
-
-def roundit(number, unc, **kwds):
-
-    """Round a number and its uncertainty to match and print the output in
-    SI form"""
-
-    # Search for scientific notation markers (FORTRAN and Maple compatible),
-    # and replace them with 'e'
-    number = str(number).replace('E', 'e').replace('D', 'e').replace('Q', 'e')
-
-    # Find the decimal place in the number
-    number = round_sf(number,len(number))
-    numdecplace = number.find('.')
-
-    # If no decimal in the number, insert one at the end
-    if numdecplace == -1:
-        number+='.'
-        numdecplace = number.find('.')
-
-    # If the user enters an integer as an uncertainty, round it to that amount
-    # of significant figures and return with warning
-    if isinstance(unc,int) == True:
-        print "** WARNING:: INTEGER UNCERTAINTY TAKEN AS NUMBER OF "+\
-        "SIGNIFICANT FIGURES ("+str(unc)+") **"
-        return round_sf(number,unc)
-
-    # Search for scientific notation markers and replace with 'e'. Must do this
-    # with unc after it has been tested to see if it is an integer
-    unc = str(unc).replace('E', 'e').replace('D', 'e').replace('Q', 'e')
-
-    if Decimal(unc) < 0:
-        return 'WARNING:: UNCERTAINTY LESS THAN ZERO. TRY AGAIN'
-
-    # Check for a form and assign to variable
-    if 'form' in kwds.keys():
-        outputform = kwds['form']
-    else:
-        outputform = 'SI'
-
-    # Check for a crop value and assign to variable
-    if 'crop' in kwds.keys():
-        sigfig_crop = kwds['crop']
-    else:
-        sigfig_crop = 0
-
-    # Ensure that the number is a string
-    number = str(number)
-
-    # Create a new variable, set as the uncertainty to two significant digits,
-    # replacing zeros, decimals, and negative signs with blank spaces
-    unc_tosigfigz = round_sf(unc,2).replace('0','').replace('.','')\
-                                   .replace('-', '')
-
-    # Ensure there are two digits in the uncertainty value for cropping
-    if len(unc_tosigfigz) == 1:
-        unc_tosigfigz+="0"
-
-    # If the uncertainty is now greater than crop value, change the uncertainty
-    # to include only one significant digit
-    if Decimal(unc_tosigfigz) >= Decimal(sigfig_crop): 
-        unc_sigfigz=1
-        unc_tosigfigz=round_sf(unc_tosigfigz,unc_sigfigz).replace('0','')
-    else:
-        unc_sigfigz=2
-        unc_tosigfigz=round_sf(unc_tosigfigz,unc_sigfigz)
-
-    if outputform == 'SI':
-        result = sp_loc(round_unc(number,unc,crop=str(sigfig_crop),\
-                        form=str(outputform)),numdecplace)
-    else:
-        result = round_unc(number,unc,crop=str(sigfig_crop),\
-                           form=str(outputform))
-
-    # Round the uncertainty to the proper amount of significant digits for use
-    # with plusminus and tuple output forms
-    unc=round_sf(unc,unc_sigfigz)
-
-    if outputform == 'SI':
-        if is_number(result[len(result)-2]) == True:
-            return ''.join(result)+'('+str(unc_tosigfigz)+')'
-        elif result[len(result)-2] == ' ':
-            if len(unc_tosigfigz) == 2:
-                return ''.join(result)+'('+str(unc_tosigfigz[0])+' '\
-                          +str(unc_tosigfigz[1])+')'
-            elif len(unc_tosigfigz) == 1:
-                return ''.join(result)+'('+str(unc_tosigfigz[0])+')'
-        elif result[len(result)-2] == '.':
-            if len(unc_tosigfigz) == 2:
-                return ''.join(result)+'('+str(unc_tosigfigz[0])+'.'\
-                          +str(unc_tosigfigz[1])+')'
-            elif len(unc_tosigfigz) == 1:
-                return ''.join(result)+'('+str(unc_tosigfigz[0])+')'
-    elif outputform == 'plusminus':
-        return ''.join(result)+' +/- '+str(unc)
-    elif outputform == 'tuple':
-        return [result,unc]
-
-def is_number(s):
-
-# http://stackoverflow.com/questions/354038/how-do-i-check-if-a-string-is-a-number-in-python
-
-    try:
-        float(s)
-        return True
-    except ValueError:
+                    tmp_map[tmp_power] += 1
+        self.map = tmp_map
+        '''if self.map == SortedDict({0:0}):
+            self.zero = True
+            self.set_sign('+')
+            if self.has_uncertainty:
+                if last_power < 0:
+                    for p in range(-1, last_power - 1, -1):
+                        self.map[p] = 0
+                elif last_power > 0:
+                    self.map = SortedDict({last_power:0})'''
+    def decimate(self, format, unc=None, zeropadding=True, sign=True):
+        '''
+        returns string of all digits in given format {spacing, spacer, decimal},
+        with unc=_Number for embedded uncertainty, and optional leading/trailing zeros & sign
+        '''
+        top = self.max_power()
+        bot = self.min_power()
+        if zeropadding:
+            top = max(top, 0)
+            bot = min(bot, 0)
+        if self.zero and not unc and top > 0:
+            top = 0
+        output = []
+        if sign and self.negative:
+            output.append('-')
+        for p in range(top, bot - 1, -1):
+            #print(p)
+            try:
+                output.append(str(self.map[p]))
+            except:
+                output.append('0')
+            if p == self.min_power() and unc:
+                output.append('('+unc.decimate(format, zeropadding=False, sign=False)+')')
+            if p != bot:
+                if p == 0:
+                    output.append(format['decimal'])
+                elif p % format['spacing'] == 0:
+                    output.append(format['spacer'])
+        return ''.join(output)
+    def output(self, output_type):
+        '''returns number in given type'''
+        no_formatting = {'decimal': '', 'spacer': '', 'spacing': 0.1}
+        return output_type(Decimal(self.decimate(no_formatting, zeropadding=False) +\
+                                    'E' + str(self.min_power())))
+    def __gt__(self, other):
+        if self.max_power() > other.max_power():
+            return True
+        for p in range(self.max_power(), self.min_power() - 1, -1):
+            if p not in other.map:
+                if not self.map[p]:
+                    continue
+                return True
+            if self.map[p] > other.map[p]:
+                return True
+            if self.map[p] < other.map[p]:
+                return False
+        if other.min_power() > self.min_power():
+            return False
         return False
+    def prefixify(self, prefix, exponent):
+        '''converts to Engineering/Scientific notation with optional SI prefix'''
+        #self.prefix = 'XXX'
+        #return None
+        self.prefix = ''
+        power_shift = 0
+        if prefix == 'sci':
+            p = self.max_power()
+            self.prefix = exponent + str(p)
+            self.increment_power_by(-p)
+            power_shift += -p
+            return power_shift
+        elif prefix == 'eng':
+            p0 = 0
+            if self.max_power() < 0:
+                p0 = 2
+            p = int((self.max_power() - p0)/3)*3
+            self.prefix = exponent + str(p)
+            self.increment_power_by(-p)
+            power_shift += -p
+            return power_shift
+        elif prefix in ['all', 'minor']:
+            prefixes = SortedDict(_major_prefixes+_minor_prefixes)
+            p = self.min_power()
+            while p >= min(prefixes):
+                if p in prefixes:
+                    break
+                p -= 1
+        else:
+            #prefix in [True, 'major', 'eng']:
+            prefixes = _major_prefixes
+            #p = int((self.min_power()-1)/3)*3
+            p = self.max_power()
+            while p > max(prefixes)+3:
+                self.prefix += prefixes[max(prefixes)][0]
+                self.increment_power_by(-max(prefixes))
+                power_shift += -max(prefixes)
+                p -= max(prefixes)
+            while p < min(prefixes):
+                self.prefix += prefixes[min(prefixes)][0]
+                self.increment_power_by(-min(prefixes))
+                power_shift += -min(prefixes)
+                p -= min(prefixes)
+            p0 = 0
+            if self.max_power() < 0:
+                p0 = 2
+            p = int((self.max_power() - p0)/3)*3
+        self.prefix = prefixes[p][0] + self.prefix
+        self.increment_power_by(-p)
+        power_shift += -p
+        return power_shift
+
+def _arguments_parse(args, kwargs):
+    '''Private function for use only in round() function:
+    Deciphers user intent based on given inputs along with preset defaults
+    which returns actionable and sumarized useful variables in a dict.
+    '''
+    types = {int, str, Decimal, float, type(_Number()), type(None)}
+    given = {'output_type': type(args[0])}
+    if type(args[0]) not in types:
+        raise TypeError('Invalid input type of %s, expecting 1 of %s' % (type(args[0]), str(types)))
+    given['num'] = _num_parse(args[0])
+    if len(args) >= 2:
+        if type(args[1]) == int:
+            given['sigfigs'] = args[1]
+            if given['sigfigs'] < 1:
+                warn('cannot have less that 1 significant figure, setting to 1')
+                given['sigfigs'] = 1
+        else:
+            given['uncertainty'] = _num_parse(args[1])
+            given['output_type'] = str
+        #throw_exception("invalid 2nd argument, expecting number, got %s" % args[1])
+    if len(args) > 2:
+        warn("last %d argument(s) discarded/ignored" % int(len(args) - 3))
+    
+    for key in _manual_settings:
+        given[key] = _manual_settings[key]
+
+    keys = {'separator', 'separation', 'sep', 'format', 'sigfigs', 'decimals', 'uncertainty', 'cutoff', 'spacing', 'spacer', 'decimal', 'output_type', 'output', 'type', 'style', 'prefix', 'notation', 'form', 'crop'}
+    for key in kwargs:
+        val = kwargs[key]
+        if key not in keys:
+            warn('unregonized argument, skipping %s=%s' % (key, val) )
+            continue
+        if key in given and key not in _manual_settings:
+            None
+            #warn("overwriting %s=%s with %s=%s" % (key, given[key], key, val))
+        if key in {'sigfigs', 'decimals', 'cutoff', 'crop', 'spacing'}:
+            try:
+                if key == 'crop':
+                    key = 'cutoff'
+                if type(val) in [float, Decimal]:
+                    warn('use integer type for %s argument' % key)
+                if key in {'cutoff', 'crop'} and int(val) < 9:
+                    warn('cutoff/crop cannot be < 9, setting to 9')
+                    val = 9
+                if key == 'sigfigs' and int(val) < 1:
+                    warn('cannot have less that 1 significant figure, setting to 1')
+                    val = 1
+                given[key] = int(val)
+            except:
+                warn('Ignoring %s=%s, invalid type of %s, expecting integer type' % (key, val, type(val)))
+        elif key == 'uncertainty':
+            given['uncertainty'] = _num_parse(val)
+        elif key == 'prefix':
+            if type(val) == bool or val in {'major', 'sci', 'eng'}:
+                given[key] = val
+            elif val in ['minor', 'all']:
+                given['prefix'] = 'all'
+            else:
+                warn('Ignoring %s=%s, invalid prefix setting, expecting: %s' % (key, val, str([True, False, 'major', 'minor', 'all'])))
+                continue
+            given['output_type'] = str
+        elif key in {'spacer', 'decimal'}:
+            given[key] = str(val)
+        elif key in {'sep', 'separation', 'separator'}:
+            if val == 'external_brackets':
+                given['separator'] = 'brackets'
+                given['external_brackets'] = True
+                continue
+            elif val == 'brackets':
+                given['separator'] = 'brackets'
+            elif val in {tuple, list}:
+                given['output'] = val
+                given['output_type'] = type(args[0])
+            elif val == 'tuple':
+                given['output'] = tuple
+                given['output_type'] = type(args[0])
+            elif val == 'list':
+                given['output'] = list
+                given['output_type'] = type(args[0])
+            given['separator'] = str(val)
+        elif key in ['format', 'style', 'output', 'type', 'output_type', 'notation', 'form']:
+            given['output_type'] = str
+            #warning might be warranted if output_type previously specified
+            properties = ['spacing', 'spacer', 'decimal', 'separator', 'cutoff', 'prefix', 'form']
+            formats = {'English': [3, ',', '.', ' ± ', 9, False,  '#,###,###.## ± 0.#'],
+                       'French':  [3, ' ', ',', ' ± ', 99, False, '# ### ###,## ± 0,##'],
+                       'other':   [3, '.', ',', ' ± ', 99, False, '#.###.###,## ± 0,##'],
+                       'PDG':     [.1, '', '.', ' ± ', 35, False,  '# ### ###.##(##)'],
+                       'Drake':   [3, ' ', '.', 'brackets', 29, False, '# ### ###.##(##)'],
+                       'sci':     [.1, '', '.', ' ± ', 9, 'sci', '# ### ###.##(##)'],
+                       'eng':     [.1, '', '.', ' ± ', 9, 'eng', '# ### ###.##(##)'],
+                       'std':     [.1, '', '.', ' ± ', 9, False, '# ### ###.##(##)']}
+            outputs = {'+-', 'map'}
+            notations = {'sci', 'scientific', 'eng', 'engineering', 'std', 'standard'}
+            if val in notations:
+                val = val[:3]
+                if val == 'sta':
+                    val = 'std'
+                for i, prop in enumerate(properties):
+                    #if prop in given and key not in _manual_settings:
+                    if prop in given:
+                        continue
+                        #warn("overwriting %s=%s with %s=%s" % (prop, given[prop], prop, formats[val][i]))
+                    given[prop] = formats[val][i]
+            elif val in formats:
+                for i, prop in enumerate(properties):
+                    if prop in given and key not in _manual_settings:
+                        None
+                        #warn("overwriting %s=%s with %s=%s" % (prop, given[prop], prop, formats[val][i]))
+                    given[prop] = formats[val][i]
+            elif val in types:
+                given['output_type'] = val
+                if 'prefix' in given:
+                    del given['prefix']
+            elif val in outputs:
+                if val == '+-':
+                    given['separator'] = ' ± '
+                else:
+                    given['output'] = val
+            else:
+                warn("expected format of %s, ignoring format of %s" % ([f for f in formats] + [o for o in outputs], val))
+                given['output_type'] = type(args[0])
+        else:
+            given[key] = val
+
+    if 'sigfigs' in given and 'decimals' in given:
+        warn('Cannot round by both sigfigs & decimals, ignoring decimal constraint')
+        del given['decimals']
+    if 'uncertainty' in given and any([x in given for x in ['sigfigs', 'decimals', 'arg2']]):
+        warn('Cannot round by both uncertainty & decimals/sigfigs simultaneously, ignoring decimals &/or sigfigs.  Use seperate calls to round() function for seperate roundings.')
+        for prop in ['sigfigs', 'decimals', 'arg2']:
+            if prop in given:
+                del given[prop]
+    if 'arg2' in given:
+        if 'sigfigs' or 'decimals' in given:
+            warn('Invalid 2nd argument, ignoring.  Sigfigs or decimals given in keyword arguments')
+        elif _default_settings['round_by_sigfigs']:
+            given['sigfigs'] = given['arg2']
+        else:
+            given['decimals'] = given['arg2']
+        del given['arg2']
+    if given['output_type'] not in {float, Decimal, type(_Number())}:
+        given['format'] = {}
+        for prop in {'decimal', 'spacer', 'spacing'}:
+            if prop in given:
+                val = given[prop]
+                del given[prop]
+            elif prop in _manual_settings:
+                val = _manual_settings[prop]
+            else:
+                val = _default_settings[prop]
+            given['format'][prop] = val
+    for prop in ['separator', 'prefix', 'exponent']:
+        if prop in given:
+            continue
+        elif prop in _manual_settings:
+            given[prop] = _manual_settings[prop]
+        else:
+            given[prop] = _default_settings[prop]
+     
+    return given
+def _num_parse(num):
+    '''Private function for use only in round()'s _arguments_parse() function:
+    Translates given number of any type into returned _Number data structure
+
+    Parsing Algorythm [O(N)]:
+    - convert to string
+    - characters are analyzed sequentially in a KMP-like state graph. ie:
+       number: -325.7854E-5 
+       state:  ABBBBCCCCDEE
+    - ValueError is raised if input number cannot be deciphered
+    '''
+    global number, i, n, negative_exp, exp
+    number = _Number()
+    i = 0
+    n = 0
+    negative_exp = False
+    exp = 0
+
+    if type(num) == type(number):
+        return num
+    if not num:
+        warn('no number provided, assuming zero (0)')
+        number = _Number()
+        number.map[0] = 0
+        number.zero = True
+        return number
+    num = str(num)
+
+    digits = set([str(a) for a in range(10)])
+    exponents = set(['E', 'e', 'D', 'd', 'Q', 'q'])
+
+    def A(num):
+        global number, i, n
+        i += 1
+        if not num or num in '.-+':
+            warn('no number provided, assuming zero (0)')
+            number.map[0] = 0
+            number.zero = True
+            return None
+        elif num[0] in exponents:
+            warn('no number provided, assuming zero (0)')
+            number.map[0] = 0
+            number.zero = True
+            D(num[1:])
+        elif num[0] in '+-':
+            number.set_sign(num[0])
+            B(num[1:])
+        elif num[0] in '.':
+            C(num[1:])
+        elif num[0] in digits:
+            n += 1
+            number.map[-n] = int(num[0])
+            B(num[1:])
+        else:
+            raise ValueError('invalid input Character "%s" (position %d, state A)' % (num[0], i))
+    def B(num):
+        global number, i, n
+        i += 1
+        if not num:
+            number.increment_power_by(n)
+            return None
+        elif num[0] in exponents:
+            number.increment_power_by(n)
+            D(num[1:])
+        elif num[0] in '.':
+            number.increment_power_by(n)
+            n = 0
+            C(num[1:])
+        elif num[0] in digits:
+            n += 1
+            number.map[-n] = int(num[0])
+            B(num[1:])
+        else:
+            raise ValueError('invalid Character "%s" (position %d, state B)' % (num[0], i))
+    def C(num):
+        global number, i, n
+        i += 1
+        if not num:
+            return None
+        elif num[0] in exponents:
+            D(num[1:])
+        elif num[0] in digits:
+            n += 1
+            number.map[-n] = int(num[0])
+            C(num[1:])
+        else:
+            raise ValueError('invalid Character "%s" (position %d, state C)' % (num[0], i))
+    def D(num):
+        global i, negative_exp, exp
+        
+        i += 1
+        if not num:
+            warn('exponent expected but not provided')
+            return None
+        elif num[0] in '+-':
+            if num[0] == '-':
+                negative_exp = True
+            if not num[1:]:
+                warn('exponent expected but not provided')
+            exp = 0
+            E(num[1:])
+        elif num[0] in digits:
+            exp = int(num[0])
+            E(num[1:])
+        else:
+            raise ValueError('invalid Character "%s" (position %d, state D)' % (num[0], i))
+    def E(num):
+        global number, i, exp
+        i += 1
+        if not num:
+            sign = 1
+            if negative_exp:
+                sign = -1
+            number.increment_power_by(sign*exp)
+            return None
+        elif num[0] in digits:
+            exp = 10*exp + int(num[0])
+            E(num[1:])
+        else:
+            raise ValueError('invalid Character "%s" (position %d, state E)' % (num[0], i))
+
+    A(num)
+
+    p = number.max_power()
+    while p in number.map and number.map[p] == 0:
+        del number.map[p]
+        p -= 1
+
+    if not number.map:
+        number.map[0] = 0
+        number.zero = True
+
+    return number
+
+def round(*args, **kwargs):
+    '''
+    round a given number to either
+        - a given number of significant figures/significant digits,
+        - a given number of decimals, or
+        - a given uncertainty
+    and optionally output the number with given formatting along with its uncertainty
+
+    Key usage examples:
+        round('2.675', sigfigs=2) => '2.7'
+        round(2.675, decimals=2)  =>  2.68
+        round('2.675', '0.00197') => '2.675 ± 0.002'
+        round('123456.789099', '-1.15E-4', output='Drake') => '123 456.789 10(12)
+
+    For detailed usage instructions see https://pypi.org/project/sigfig/
+    '''
+    if not args:
+        warn("no input number given, nothing to return")
+        return None
+    given = _arguments_parse(args, kwargs)
+    num = given['num']
+
+    if 'decimals' in given:
+        num.round_by_decimals(given['decimals'])
+    elif 'sigfigs' in given:
+        if given['sigfigs'] > len(num.map):
+            warn("warning: %d significant figures requested from number with only %d significant figures" % (given['sigfigs'], len(num.map)))
+        last_power = num.max_power() - given['sigfigs'] + 1
+        num.round_by_decimals(-last_power)
+        while len(num.map) > given['sigfigs']:
+            del num.map[num.min_power()]
+    elif 'uncertainty' in given:
+        num.has_uncertainty = True
+        if 'cutoff' in given:
+            cutoff = str(given['cutoff'])
+        elif 'cutoff' in _manual_settings:
+            cutoff = str(_manual_settings['cutoff'])
+        else:
+            cutoff = str(_default_settings['cutoff'])
+        unc = round(given['uncertainty'], sigfigs=len(cutoff), output='map')
+        cut = _num_parse(cutoff + 'E' + str(unc.min_power()))
+        if unc > cut:
+            unc = round(given['uncertainty'], sigfigs=len(cutoff)-1, output='map')
+            if unc.map[unc.max_power()] == 1:
+                unc.map[unc.max_power() - 1] = 0
+        num.round_by_decimals(-unc.min_power())
+
+    if given['prefix']:
+        power_shift = num.prefixify(given['prefix'], given['exponent'])
+        if 'uncertainty' in given:
+            unc.increment_power_by(power_shift)
+
+    if given['output_type'] in [int, Decimal, float]:
+        if 'output' in given and given['output'] in {tuple, list}:
+            if 'uncertainty' not in given:
+                return given['output']([num.output(given['output_type'])])
+            return given['output']([num.output(given['output_type']),
+                                    unc.output(given['output_type'])])
+        return num.output(given['output_type'])
+    elif 'output' in given and given['output'] == 'map':
+        return num
+    
+    if 'uncertainty' in given and given['separator'] == 'brackets' and unc.min_power() > 0 and 'external_brackets' not in given:
+        #print(given)
+        return num.decimate(given['format'], unc=unc)
+
+    output = num.decimate(given['format'])
+    if 'output' in given and given['output'] in {list, tuple}:
+        if 'uncertainty' in given:
+            return given['output']([output, unc.decimate(given['format'], sign=False)])
+        return given['output']([output])
+    if 'uncertainty' in given:
+        if given['separator'] == 'brackets' and unc.min_power() > 0:
+            output += '('+unc.decimate(given['format'], sign=False)+')'
+        elif given['separator'] == 'brackets':
+            output += '('+unc.decimate(given['format'], zeropadding=False, sign=False)+')'
+        else:
+            if given['prefix'] and given['prefix'] not in {True, 'major', 'minor', 'all'}:
+                output += num.prefix
+            output += given['separator'] + unc.decimate(given['format'], sign=False)
+
+    if given['prefix']:
+        output += num.prefix
+
+    return output
+
+def roundit(*args, **kwargs):
+    '''Depreciated version of round() function with limited scope'''
+    warn('Depreciated Usage: Migrate code to use round() function instead', DeprecationWarning)
+    defaults = {'spacer': ' ', 'spacing': 3, 'separator': 'brackets', 'output_type' : str}
+    final_parameters = defaults
+    if 'form' in kwargs:
+        if kwargs['form'] == 'plusminus':
+            kwargs['separator'] = ' +/- '
+        else:
+            kwargs['separator'] = kwargs['form']
+        del kwargs['form']
+    if 'crop' in kwargs:
+        kwargs['crop'] -= 1
+    for key in kwargs:
+        final_parameters[key] = kwargs[key]
+    return round(*args, **final_parameters)
+def round_unc(*args, **kwargs):
+    '''Depreciated version of round() function with limited scope'''
+    warn('Depreciated Usage: Migrate code to use round() function instead', DeprecationWarning)
+    defaults = {'sep': tuple}
+    final_parameters = defaults
+    if 'form' in kwargs and kwargs['form'] == 'plusminus':
+        kwargs['separator'] = ' +/- '
+        del kwargs['form']
+    if 'crop' in kwargs:
+        kwargs['crop'] -= 1
+    for key in kwargs:
+        final_parameters[key] = kwargs[key]
+    return round(*[str(arg) for arg in args], **final_parameters)[0]
+def round_sf(number, sigfigs):
+    '''Depreciated version of round() function with limited scope'''
+    warn('Depreciated Usage: Migrate code to use round() function instead', DeprecationWarning)
+    return round(str(number),sigfigs=sigfigs)
